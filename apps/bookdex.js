@@ -81,7 +81,7 @@ import {
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
-import { loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
+import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
 
 const helpSessionCache = new Map()
 let helpSessionCacheLoaded = false
@@ -389,9 +389,9 @@ export class BookDex extends plugin {
         startBookDexWebUi({ logger }).catch(err => logger.error('[bookdex.webui.start]', err))
         this.task = [
             {
-                name: '文本库自动更新窗口检查',
+                name: '文本库每日自动更新',
                 cron: '0 0 0 * * ?',
-                fnc: this.autoUpdateWindowTick.bind(this)
+                fnc: this.autoUpdateTick.bind(this)
             }
         ]
     }
@@ -399,10 +399,6 @@ export class BookDex extends plugin {
     getNowGmt8() {
         const now = Date.now()
         return new Date(now + 8 * 3600 * 1000)
-    }
-
-    shouldRunAutoUpdateWindow() {
-        return true
     }
 
     async showWebUi() {
@@ -561,14 +557,14 @@ export class BookDex extends plugin {
         return this.updateAllTexts(false)
     }
 
-    async autoUpdateWindowTick() {
-        if (!this.shouldRunAutoUpdateWindow()) return false
+    async autoUpdateTick() {
+        if (!shouldRunBookDexAutoUpdate()) return false
         try {
             const config = await loadBookDexWebConfig()
             await this.updateAllTexts(true, config.autoUpdate?.forceModules)
             await consumeCustomAutoRun()
         } catch (err) {
-            logger.error('[bookdex.autoUpdateWindowTick]', err)
+            logger.error('[bookdex.autoUpdateTick]', err)
         }
         return true
     }
