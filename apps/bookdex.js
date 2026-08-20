@@ -81,7 +81,7 @@ import {
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
-import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
+import { loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
 
 const helpSessionCache = new Map()
 let helpSessionCacheLoaded = false
@@ -402,7 +402,7 @@ export class BookDex extends plugin {
     }
 
     shouldRunAutoUpdateWindow() {
-        return shouldRunBookDexAutoUpdate()
+        return true
     }
 
     async showWebUi() {
