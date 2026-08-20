@@ -81,7 +81,7 @@ import {
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
-import { shouldRunBookDexAutoUpdate, consumeCustomAutoRun } from '../lib/bookdex/webui-config.js'
+import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
 
 const helpSessionCache = new Map()
 let helpSessionCacheLoaded = false
@@ -402,7 +402,7 @@ export class BookDex extends plugin {
     }
 
     shouldRunAutoUpdateWindow() {
-        return true
+        return shouldRunBookDexAutoUpdate()
     }
 
     async showWebUi() {
@@ -432,7 +432,7 @@ export class BookDex extends plugin {
         return this.updateAllTexts(false)
     }
 
-    async updateAllTexts(silent = false) {
+    async updateAllTexts(silent = false, forceModules = []) {
         if (typeof silent !== 'boolean') silent = false
         try {
             const labelMap = {
@@ -447,14 +447,19 @@ export class BookDex extends plugin {
                 card: '月谕圣牌',
                 backpack: '背包'
             }
+            const forcedKeys = new Set(
+                (Array.isArray(forceModules) ? forceModules : [])
+                    .map(key => String(key || '').trim())
+                    .filter(key => FORCE_MODULE_KEYS.includes(key))
+            )
             const tasks = [
-                { key: 'book', label: '书籍数据', check: () => fetchBooksFromWiki({ dryRun: true }), exec: () => fetchBooksFromWiki(this.makeUpdateReporter('书籍更新', silent)) },
-                { key: 'role', label: '角色故事数据', check: () => fetchRoleStoryAll({ dryRun: true }), exec: () => fetchRoleStoryAll({ ...this.makeUpdateReporter('角色故事更新', silent), deepCompare: silent }) },
+                { key: 'book', label: '书籍数据', check: () => fetchBooksFromWiki({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchBooksFromWiki({ ...this.makeUpdateReporter('书籍更新', silent), deepCompare }) },
+                { key: 'role', label: '角色故事数据', check: () => fetchRoleStoryAll({ dryRun: true }), exec: ({ deepCompare = silent } = {}) => fetchRoleStoryAll({ ...this.makeUpdateReporter('角色故事更新', silent), deepCompare }) },
                 { key: 'relic', label: '圣遗物数据', check: () => fetchRelicAll({ dryRun: true }), exec: () => fetchRelicAll(this.makeUpdateReporter('圣遗物更新', silent)) },
                 { key: 'weapon', label: '武器故事数据', check: () => fetchWeaponAll({ dryRun: true }), exec: () => fetchWeaponAll(this.makeUpdateReporter('武器故事更新', silent, 500)) },
-                { key: 'voice', label: '角色语音数据', check: () => fetchVoiceAll({ dryRun: true }), exec: () => fetchVoiceAll({ ...this.makeUpdateReporter('角色语音更新', silent), deepCompare: silent }) },
+                { key: 'voice', label: '角色语音数据', check: () => fetchVoiceAll({ dryRun: true }), exec: ({ deepCompare = silent } = {}) => fetchVoiceAll({ ...this.makeUpdateReporter('角色语音更新', silent), deepCompare }) },
                 { key: 'plot', label: '剧情文本数据', check: () => fetchPlotAll({ dryRun: true }), exec: () => fetchPlotAll(this.makeUpdateReporter('剧情文本更新', silent, 500)) },
-                { key: 'map', label: '地图文本数据', check: () => fetchMapAll({ dryRun: true }), exec: () => fetchMapAll(this.makeUpdateReporter('地图文本更新', silent, 500)) },
+                { key: 'map', label: '地图文本数据', check: () => fetchMapAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchMapAll({ ...this.makeUpdateReporter('地图文本更新', silent, 500), deepCompare }) },
                 { key: 'anecdote', label: '角色逸闻数据', check: () => fetchAnecdoteAll({ dryRun: true }), exec: () => fetchAnecdoteAll(this.makeUpdateReporter('角色逸闻更新', silent, 500)) },
                 { key: 'card', label: '月谕圣牌数据', check: () => fetchCardAll({ dryRun: true }), exec: () => fetchCardAll(this.makeUpdateReporter('月谕圣牌更新', silent, 500)) },
                 { key: 'backpack', label: '背包数据', check: () => fetchBackpackAll({ dryRun: true }), exec: () => fetchBackpackAll(this.makeUpdateReporter('背包更新', silent, 500)) }
@@ -470,7 +475,18 @@ export class BookDex extends plugin {
 
             const checks = []
             const failures = []
+            const plan = []
             for (const item of tasks) {
+                if (forcedKeys.has(item.key)) {
+                    try {
+                        const ret = await item.exec({ deepCompare: true })
+                        plan.push({ ...item, result: ret, forced: true })
+                    } catch (error) {
+                        failures.push({ ...item, stage: '强制核对', error })
+                        logger.error(`[bookdex.updateAllTexts] ${item.label} forced exec failed`, error)
+                    }
+                    continue
+                }
                 try {
                     const ret = await confirmCheck(item)
                     checks.push({ ...item, checkResult: ret })
@@ -481,7 +497,7 @@ export class BookDex extends plugin {
             }
 
             const active = checks.filter(item => Number(item.checkResult?.updated || 0) > 0)
-            if (!active.length) {
+            if (!active.length && !plan.length) {
                 if (!silent) {
                     const lines = ['统一更新完成：本次检测到 0 个分量有更新，当前没有增量内容']
                     if (failures.length) {
@@ -494,7 +510,12 @@ export class BookDex extends plugin {
                 return true
             }
 
-            const summaryLines = [`统一更新开始：本次检测到 ${active.length} 个分量有更新`]
+            const summaryLines = ['统一更新开始']
+            if (active.length) summaryLines.push(`本次检测到 ${active.length} 个分量有更新`)
+            if (plan.length) summaryLines.push(`已强制核对 ${plan.length} 个分量`)
+            for (const item of plan) {
+                summaryLines.push(`${labelMap[item.key]}：扫描 ${item.result.total ?? 0} 条目，实际覆盖 ${item.result.updated ?? 0}`)
+            }
             for (const item of active) {
                 summaryLines.push(`${labelMap[item.key]}：预计变更 ${item.checkResult.updated}`)
             }
@@ -502,7 +523,6 @@ export class BookDex extends plugin {
             if (!silent) await this.reply(summaryLines.join('\n'))
             else logger.mark('[bookdex.autoUpdate] ' + summaryLines.join(' | '))
 
-            const plan = []
             for (const item of active) {
                 try {
                     const ret = await item.exec()
@@ -514,7 +534,10 @@ export class BookDex extends plugin {
             }
 
             const lines = ['统一更新执行完成']
-            for (const item of plan) lines.push(`${labelMap[item.key]}：${item.result.total} 条目（本次变更 ${item.result.updated}）`)
+            for (const item of plan) {
+                const suffix = item.forced ? '，强制核对' : ''
+                lines.push(`${labelMap[item.key]}：${item.result.total} 条目（本次变更 ${item.result.updated}${suffix}）`)
+            }
             if (failures.length) {
                 lines.push(`有 ${failures.length} 个分量失败或跳过，旧缓存已保留，可稍后重试：`)
                 for (const item of failures) lines.push(`${labelMap[item.key] || item.label}${item.stage ? `（${item.stage}）` : ''}：${formatFetchError(item.error)}`)
@@ -541,7 +564,8 @@ export class BookDex extends plugin {
     async autoUpdateWindowTick() {
         if (!this.shouldRunAutoUpdateWindow()) return false
         try {
-            await this.updateAllTexts(true)
+            const config = await loadBookDexWebConfig()
+            await this.updateAllTexts(true, config.autoUpdate?.forceModules)
             await consumeCustomAutoRun()
         } catch (err) {
             logger.error('[bookdex.autoUpdateWindowTick]', err)
@@ -1085,7 +1109,12 @@ export class BookDex extends plugin {
         await this.reply(`开始单条更新${label}：${target}`)
         try {
             const ret = await updater(target)
-            if (ret?.ok) return this.reply(`单条更新成功：${label}「${ret.name || target}」`)
+            if (ret?.ok) {
+                const detail = typeof ret.changed === 'boolean'
+                    ? (ret.changed ? '，检测到正文差异并已强制覆盖' : '，正文无差异，已重新确认覆盖')
+                    : ''
+                return this.reply(`单条更新成功：${label}「${ret.name || target}」${detail}`)
+            }
             if (ret?.reason === 'not_found') return this.reply(`未找到对应条目：${target}`)
             if (ret?.reason === 'entry_missing') return this.reply(`更新失败：未拿到词条详情（${target}）`)
             if (ret?.reason === 'empty') return this.reply(`更新失败：词条缺少可用文本（${target}）`)
