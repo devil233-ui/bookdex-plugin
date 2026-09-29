@@ -83,6 +83,95 @@ import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
 import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS, AUTO_UPDATE_HOUR_GMT8 } from '../lib/bookdex/webui-config.js'
 
+// 分类表：#<分类>强制更新 与 #<条目名><分类>强制更新 都按它分发。
+// aliases 里放用户可能敲的分类写法（长写法放前面，单项指令按最长别名切分条目名）。
+// 强制核对 = 逐条读取米游社详情后与本地比对，能发现列表签名不变但正文变化的情况。
+const FORCE_UPDATE_TARGETS = [
+    {
+        key: 'book',
+        label: '书籍',
+        aliases: ['书籍'],
+        help: '#书籍帮助',
+        run: reporter => fetchBooksFromWiki({ ...reporter, deepCompare: true }),
+        updateOne: updateOneBookByName
+    },
+    {
+        key: 'role',
+        label: '角色故事',
+        aliases: ['角色故事'],
+        help: '#角色故事帮助',
+        run: reporter => fetchRoleStoryAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneRoleStoryByName
+    },
+    {
+        key: 'relic',
+        label: '圣遗物故事',
+        aliases: ['圣遗物故事', '圣遗物'],
+        help: '#圣遗物帮助',
+        run: reporter => fetchRelicAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneRelicByName
+    },
+    {
+        key: 'weapon',
+        label: '武器故事',
+        aliases: ['武器故事', '武器'],
+        help: '#武器帮助',
+        run: reporter => fetchWeaponAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneWeaponByName
+    },
+    {
+        key: 'voice',
+        label: '角色语音',
+        aliases: ['角色语音', '语音'],
+        help: '#语音帮助',
+        run: reporter => fetchVoiceAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneVoiceByName
+    },
+    {
+        key: 'plot',
+        label: '剧情文本',
+        aliases: ['剧情文本', '剧情'],
+        help: '#剧情帮助',
+        run: reporter => fetchPlotAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOnePlotByName
+    },
+    {
+        key: 'map',
+        label: '地图文本',
+        aliases: ['地图文本'],
+        help: '#地图文本帮助',
+        run: reporter => fetchMapAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneMapByName
+    },
+    {
+        key: 'anecdote',
+        label: '角色逸闻',
+        aliases: ['角色逸闻'],
+        help: '#角色逸闻帮助',
+        run: reporter => fetchAnecdoteAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneAnecdoteByName
+    },
+    {
+        key: 'card',
+        label: '月谕圣牌',
+        aliases: ['月谕圣牌'],
+        help: '#月谕圣牌帮助',
+        run: reporter => fetchCardAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneCardByName
+    },
+    {
+        key: 'backpack',
+        label: '背包',
+        aliases: ['背包'],
+        help: '#背包帮助',
+        run: reporter => fetchBackpackAll({ ...reporter, deepCompare: true }),
+        updateOne: updateOneBackpackByName
+    }
+]
+
+// 强制更新指令里允许出现的分类写法（正则片段，长写法在前避免被短的抢先）
+const FORCE_UPDATE_NAME_PATTERN = [...new Set(FORCE_UPDATE_TARGETS.flatMap(item => item.aliases))].join('|')
+
 const helpSessionCache = new Map()
 let helpSessionCacheLoaded = false
 
@@ -125,7 +214,7 @@ export class BookDex extends plugin {
     constructor() {
         super({
             name: '书籍角色文本图鉴（bookdex-plugin）',
-            dsc: '书籍、角色故事、剧情、地图文本、角色逸闻、月谕圣牌、圣遗物与武器文本检索',
+            dsc: '书籍、角色故事、剧情、地图文本、角色逸闻、月谕圣牌、圣遗物故事与武器文本检索',
             event: 'message',
             priority: 5000,
             rule: [
@@ -163,12 +252,12 @@ export class BookDex extends plugin {
                     permission: 'master'
                 },
                 {
-                    reg: '^#语音更新$',
+                    reg: '^#(?:角色语音|语音)更新$',
                     fnc: 'updateVoices',
                     permission: 'master'
                 },
                 {
-                    reg: '^#剧情更新$',
+                    reg: '^#(?:剧情文本|剧情)更新$',
                     fnc: 'updatePlots',
                     permission: 'master'
                 },
@@ -193,22 +282,29 @@ export class BookDex extends plugin {
                     permission: 'master'
                 },
                 {
+                    // 这两个长写法必须排在下面 `#.+故事更新` 这类单项正则之前，
+                    // 否则 #武器故事更新 / #圣遗物故事更新 会被当成「单项角色故事更新」
+                    reg: '^#圣遗物故事更新$',
+                    fnc: 'updateRelics',
+                    permission: 'master'
+                },
+                {
+                    reg: '^#武器故事更新$',
+                    fnc: 'updateWeapons',
+                    permission: 'master'
+                },
+                {
                     reg: '^#.+书籍更新$',
                     fnc: 'updateOneBook',
                     permission: 'master'
                 },
                 {
-                    reg: '^#.+故事更新$',
-                    fnc: 'updateOneRoleStory',
-                    permission: 'master'
-                },
-                {
-                    reg: '^#.+语音更新$',
+                    reg: '^#.+(?:角色语音|语音)更新$',
                     fnc: 'updateOneVoice',
                     permission: 'master'
                 },
                 {
-                    reg: '^#.+剧情更新$',
+                    reg: '^#.+(?:剧情文本|剧情)更新$',
                     fnc: 'updateOnePlot',
                     permission: 'master'
                 },
@@ -233,13 +329,31 @@ export class BookDex extends plugin {
                     permission: 'master'
                 },
                 {
-                    reg: '^#.+圣遗物更新$',
+                    reg: '^#.+(?:圣遗物故事|圣遗物)更新$',
                     fnc: 'updateOneRelic',
                     permission: 'master'
                 },
                 {
-                    reg: '^#.+武器故事更新$',
+                    reg: '^#.+(?:武器故事|武器)更新$',
                     fnc: 'updateOneWeapon',
+                    permission: 'master'
+                },
+                {
+                    // 角色故事的单项正则最宽（`#.+故事更新` 会先吃掉「XX武器故事更新」），必须排在武器/圣遗物之后
+                    reg: '^#.+故事更新$',
+                    fnc: 'updateOneRoleStory',
+                    permission: 'master'
+                },
+                {
+                    // 分类级强制核对：#<分类>强制更新（分类名的长短写法都认）
+                    reg: `^#(?:${FORCE_UPDATE_NAME_PATTERN})强制更新$`,
+                    fnc: 'forceUpdateCategory',
+                    permission: 'master'
+                },
+                {
+                    // 单项级强制核对：#<条目名><分类>强制更新；单项更新本身就是重新拉取该条目
+                    reg: `^#.+(?:${FORCE_UPDATE_NAME_PATTERN})强制更新$`,
+                    fnc: 'forceUpdateOne',
                     permission: 'master'
                 },
                 {
@@ -295,20 +409,16 @@ export class BookDex extends plugin {
                     fnc: 'backpackRead'
                 },
                 {
-                    reg: '^#.+故事(详情)?(?:文本|图片)?$',
-                    fnc: 'roleStoryRead'
-                },
-                {
                     reg: '^#圣遗物更新$',
                     fnc: 'updateRelics',
                     permission: 'master'
                 },
                 {
-                    reg: '^#圣遗物帮助$',
+                    reg: '^#(?:圣遗物故事|圣遗物)帮助$',
                     fnc: 'relicHelp'
                 },
                 {
-                    reg: '^#.+圣遗物(?:文本|图片)?$',
+                    reg: '^#.+(?:圣遗物故事|圣遗物)(?:文本|图片)?$',
                     fnc: 'relicRead'
                 },
                 {
@@ -325,6 +435,11 @@ export class BookDex extends plugin {
                     fnc: 'weaponRead'
                 },
                 {
+                    // 角色故事读取同样最宽，排在武器/圣遗物之后
+                    reg: '^#.+故事(详情)?(?:文本|图片)?$',
+                    fnc: 'roleStoryRead'
+                },
+                {
                     reg: '^#(书籍搜索|搜书).*$',
                     fnc: 'searchBooks'
                 },
@@ -333,7 +448,7 @@ export class BookDex extends plugin {
                     fnc: 'searchRoleStories'
                 },
                 {
-                    reg: '^#圣遗物搜索\s*.+$',
+                    reg: '^#(?:圣遗物故事|圣遗物)搜索\s*.+$',
                     fnc: 'searchRelics'
                 },
                 {
@@ -434,7 +549,7 @@ export class BookDex extends plugin {
             const labelMap = {
                 book: '书籍',
                 role: '角色故事',
-                relic: '圣遗物',
+                relic: '圣遗物故事',
                 weapon: '武器故事',
                 voice: '角色语音',
                 plot: '剧情文本',
@@ -451,14 +566,14 @@ export class BookDex extends plugin {
             const tasks = [
                 { key: 'book', label: '书籍数据', check: () => fetchBooksFromWiki({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchBooksFromWiki({ ...this.makeUpdateReporter('书籍更新', silent), deepCompare }) },
                 { key: 'role', label: '角色故事数据', check: () => fetchRoleStoryAll({ dryRun: true }), exec: ({ deepCompare = silent } = {}) => fetchRoleStoryAll({ ...this.makeUpdateReporter('角色故事更新', silent), deepCompare }) },
-                { key: 'relic', label: '圣遗物数据', check: () => fetchRelicAll({ dryRun: true }), exec: () => fetchRelicAll(this.makeUpdateReporter('圣遗物更新', silent)) },
-                { key: 'weapon', label: '武器故事数据', check: () => fetchWeaponAll({ dryRun: true }), exec: () => fetchWeaponAll(this.makeUpdateReporter('武器故事更新', silent, 500)) },
+                { key: 'relic', label: '圣遗物故事数据', check: () => fetchRelicAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchRelicAll({ ...this.makeUpdateReporter('圣遗物故事更新', silent), deepCompare }) },
+                { key: 'weapon', label: '武器故事数据', check: () => fetchWeaponAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchWeaponAll({ ...this.makeUpdateReporter('武器故事更新', silent, 500), deepCompare }) },
                 { key: 'voice', label: '角色语音数据', check: () => fetchVoiceAll({ dryRun: true }), exec: ({ deepCompare = silent } = {}) => fetchVoiceAll({ ...this.makeUpdateReporter('角色语音更新', silent), deepCompare }) },
-                { key: 'plot', label: '剧情文本数据', check: () => fetchPlotAll({ dryRun: true }), exec: () => fetchPlotAll(this.makeUpdateReporter('剧情文本更新', silent, 500)) },
+                { key: 'plot', label: '剧情文本数据', check: () => fetchPlotAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchPlotAll({ ...this.makeUpdateReporter('剧情文本更新', silent, 500), deepCompare }) },
                 { key: 'map', label: '地图文本数据', check: () => fetchMapAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchMapAll({ ...this.makeUpdateReporter('地图文本更新', silent, 500), deepCompare }) },
-                { key: 'anecdote', label: '角色逸闻数据', check: () => fetchAnecdoteAll({ dryRun: true }), exec: () => fetchAnecdoteAll(this.makeUpdateReporter('角色逸闻更新', silent, 500)) },
-                { key: 'card', label: '月谕圣牌数据', check: () => fetchCardAll({ dryRun: true }), exec: () => fetchCardAll(this.makeUpdateReporter('月谕圣牌更新', silent, 500)) },
-                { key: 'backpack', label: '背包数据', check: () => fetchBackpackAll({ dryRun: true }), exec: () => fetchBackpackAll(this.makeUpdateReporter('背包更新', silent, 500)) }
+                { key: 'anecdote', label: '角色逸闻数据', check: () => fetchAnecdoteAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchAnecdoteAll({ ...this.makeUpdateReporter('角色逸闻更新', silent, 500), deepCompare }) },
+                { key: 'card', label: '月谕圣牌数据', check: () => fetchCardAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchCardAll({ ...this.makeUpdateReporter('月谕圣牌更新', silent, 500), deepCompare }) },
+                { key: 'backpack', label: '背包数据', check: () => fetchBackpackAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchBackpackAll({ ...this.makeUpdateReporter('背包更新', silent, 500), deepCompare }) }
             ]
 
             const confirmCheck = async (item) => {
@@ -997,29 +1112,29 @@ export class BookDex extends plugin {
     }
 
     async updateRelics() {
-        await this.reply('开始抓取圣遗物文本，请稍等（约1-2分钟）')
-        const ret = await fetchRelicAll(this.makeUpdateReporter('圣遗物更新'))
-        if (!ret.updated) return this.reply('圣遗物更新完成：当前没有检测到增量内容')
-        return this.reply(`圣遗物更新完成：共 ${ret.total} 套。\n命令：#圣遗物帮助`)
+        await this.reply('开始抓取圣遗物故事文本，请稍等（约1-2分钟）')
+        const ret = await fetchRelicAll(this.makeUpdateReporter('圣遗物故事更新'))
+        if (!ret.updated) return this.reply('圣遗物故事更新完成：当前没有检测到增量内容')
+        return this.reply(`圣遗物故事更新完成：共 ${ret.total} 套。\n命令：#圣遗物帮助`)
     }
 
     async relicHelp() {
         const idx = await loadRelicIndex()
         const sets = idx.sets || []
-        if (!sets.length) return this.reply('暂无圣遗物数据，请先发送 #圣遗物更新')
+        if (!sets.length) return this.reply('暂无圣遗物故事数据，请先发送 #圣遗物故事更新')
         let session = this.saveSession({
             type: 'relic',
             relics: sets
         })
 
         const lines = sets.map((s, i) => `${i + 1}. ${s.name}`)
-        session = await this.replyChunkedListWithSession([`📗 圣遗物列表（共 ${sets.length} 套）`, '命令：#套装名圣遗物 / #套装名圣遗物图片；也可引用本条发序号'], lines, 40, session)
+        session = await this.replyChunkedListWithSession([`📗 圣遗物故事列表（共 ${sets.length} 套）`, '命令：#套装名圣遗物故事 / #套装名圣遗物故事图片；也可引用本条发序号'], lines, 40, session)
         return Boolean(session)
     }
 
     async relicRead() {
         const msg = this.e.msg.trim()
-        const m = msg.match(/^#(.+?)圣遗物(?:文本|图片)?$/)
+        const m = msg.match(/^#(.+?)(?:圣遗物故事|圣遗物)(?:文本|图片)?$/)
         if (!m) return false
         const raw = this.trimOutputSuffix((m[1] || '').trim())
         const { wantImage } = this.outputMode(msg)
@@ -1027,7 +1142,7 @@ export class BookDex extends plugin {
 
         const idx = await loadRelicIndex()
         const sets = idx.sets || []
-        if (!sets.length) return this.reply('暂无圣遗物数据，请先发送 #圣遗物更新')
+        if (!sets.length) return this.reply('暂无圣遗物故事数据，请先发送 #圣遗物故事更新')
 
         const key = normalizeRoleName(raw)
         const meta = sets.find(s => normalizeRoleName(s.name) === key || (s.alias || []).includes(key))
@@ -1035,10 +1150,10 @@ export class BookDex extends plugin {
         if (!meta) return false
 
         const file = path.join(relicRoot, `${slugify(meta.name)}.json`)
-        if (!fss.existsSync(file)) return this.reply(`未找到圣遗物：${meta.name}`)
+        if (!fss.existsSync(file)) return this.reply(`未找到圣遗物故事：${meta.name}`)
         const set = JSON.parse(await fs.readFile(file, 'utf8'))
         const text = renderRelicText(set)
-        return this.replyRichItemContent(set, `${set.name}圣遗物`, text, wantImage)
+        return this.replyRichItemContent(set, `${set.name}圣遗物故事`, text, wantImage)
     }
 
     async updateWeapons() {
@@ -1095,9 +1210,13 @@ export class BookDex extends plugin {
     }
 
     extractSingleUpdateTarget(suffix) {
+        const suffixes = (Array.isArray(suffix) ? suffix : [suffix])
+            .slice()
+            .sort((a, b) => b.length - a.length)
         const raw = String(this.e.msg || '').trim().replace(/^#/, '').trim()
-        if (!raw.endsWith(suffix)) return ''
-        return raw.slice(0, -suffix.length).trim()
+        const hit = suffixes.find(item => raw.endsWith(item))
+        if (!hit) return ''
+        return raw.slice(0, -hit.length).trim()
     }
 
     async replySingleUpdateResult(label, target, updater) {
@@ -1132,12 +1251,12 @@ export class BookDex extends plugin {
     }
 
     async updateOneVoice() {
-        const target = this.extractSingleUpdateTarget('语音更新')
+        const target = this.extractSingleUpdateTarget(['角色语音更新', '语音更新'])
         return this.replySingleUpdateResult('角色语音', target, updateOneVoiceByName)
     }
 
     async updateOnePlot() {
-        const target = this.extractSingleUpdateTarget('剧情更新')
+        const target = this.extractSingleUpdateTarget(['剧情文本更新', '剧情更新'])
         return this.replySingleUpdateResult('剧情文本', target, updateOnePlotByName)
     }
 
@@ -1162,13 +1281,48 @@ export class BookDex extends plugin {
     }
 
     async updateOneRelic() {
-        const target = this.extractSingleUpdateTarget('圣遗物更新')
-        return this.replySingleUpdateResult('圣遗物', target, updateOneRelicByName)
+        const target = this.extractSingleUpdateTarget(['圣遗物故事更新', '圣遗物更新'])
+        return this.replySingleUpdateResult('圣遗物故事', target, updateOneRelicByName)
     }
 
     async updateOneWeapon() {
-        const target = this.extractSingleUpdateTarget('武器故事更新')
+        const target = this.extractSingleUpdateTarget(['武器故事更新', '武器更新'])
         return this.replySingleUpdateResult('武器故事', target, updateOneWeaponByName)
+    }
+
+    // #<分类>强制更新：逐条读取米游社详情并与本地比对，能发现列表签名不变但正文变化的情况
+    async forceUpdateCategory() {
+        const raw = String(this.e.msg || '').trim().replace(/^[#＃]/, '').trim()
+        const target = FORCE_UPDATE_TARGETS.find(item => item.aliases.some(alias => raw === `${alias}强制更新`))
+        if (!target) return this.reply('没有识别到要强制核对的分类，用法如：#武器故事强制更新')
+        await this.reply(`开始强制核对${target.label}：会逐条读取米游社详情并与本地比对，条目多时较慢，请稍等…`)
+        const ret = await target.run(this.makeUpdateReporter(`${target.label}强制核对`, false, 100))
+        return this.replyForceResult(target, ret)
+    }
+
+    // #<条目名><分类>强制更新：单项更新本身就是重新拉取该条目，等价于强制核对
+    async forceUpdateOne() {
+        const raw = String(this.e.msg || '').trim().replace(/^[#＃]/, '').trim()
+        let hit = null
+        for (const item of FORCE_UPDATE_TARGETS) {
+            for (const alias of item.aliases) {
+                const suffix = `${alias}强制更新`
+                if (!raw.endsWith(suffix)) continue
+                const name = raw.slice(0, -suffix.length).trim()
+                if (!name) continue
+                if (!hit || alias.length > hit.alias.length) hit = { item, name, alias }
+            }
+        }
+        if (!hit) return this.reply('没有识别到要强制核对的条目，用法如：#阿莫斯之弓武器故事强制更新')
+        return this.replySingleUpdateResult(hit.item.label, hit.name, hit.item.updateOne)
+    }
+
+    replyForceResult(target, ret = {}) {
+        const lines = [`${target.label}强制核对完成：共 ${ret?.total ?? 0} 条目，本次覆盖 ${ret?.updated ?? 0} 条`]
+        if (Number(ret?.misses || 0) > 0) lines.push(`有 ${ret.misses} 条未取到可用文本，已记入 _misses.json`)
+        if (Number(ret?.failed || 0) > 0) lines.push(`有 ${ret.failed} 条未能处理（米游社侧没有正文或读取失败），已跳过并保留旧缓存`)
+        lines.push(`命令：${target.help}`)
+        return this.reply(lines.join('\n'))
     }
 
     async runTextSearch(keyword, types = ['book']) {
@@ -1185,7 +1339,7 @@ export class BookDex extends plugin {
             results: rows
         })
 
-        const mapLabel = { book: '书籍', role: '角色', relic: '圣遗物', weapon: '武器', voice: '语音', plot: '剧情', map: '地图文本', anecdote: '角色逸闻', card: '月谕圣牌', backpack: '背包' }
+        const mapLabel = { book: '书籍', role: '角色', relic: '圣遗物故事', weapon: '武器', voice: '语音', plot: '剧情', map: '地图文本', anecdote: '角色逸闻', card: '月谕圣牌', backpack: '背包' }
         const lines = rows.map((r, i) => `${i + 1}. [${mapLabel[r.type]}] ${r.name}${r.snippet ? `\n  ↳ ${r.snippet}` : ''}`)
 
         session = await this.replyChunkedListWithSession([`🔎 关键词：${keyword}`, `共找到 ${rows.length} 条`, '可引用本搜索结果发序号查看详情（可加“图片”或“语音”）'], lines, 10, session)
@@ -1199,7 +1353,7 @@ export class BookDex extends plugin {
     }
 
     async searchRelics() {
-        const keyword = this.e.msg.replace(/^#圣遗物搜索\s*/, '').trim()
+        const keyword = this.e.msg.replace(/^#(?:圣遗物故事|圣遗物)搜索\s*/, '').trim()
         if (!keyword) return this.reply('请输入关键词')
         return this.replySearch(keyword, ['relic'])
     }
@@ -1761,10 +1915,10 @@ export class BookDex extends plugin {
             const meta = session.relics[idx - 1]
             if (!meta) return this.reply('序号超出范围，请先发送 #圣遗物帮助')
             const file = path.join(relicRoot, `${slugify(meta.name)}.json`)
-            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物：${meta.name}`)
+            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物故事：${meta.name}`)
             const set = JSON.parse(await fs.readFile(file, 'utf8'))
             const text = renderRelicText(set)
-            return this.replyRichItemContent(set, `${set.name}圣遗物`, text, wantImage)
+            return this.replyRichItemContent(set, `${set.name}圣遗物故事`, text, wantImage)
         }
 
         if (session?.type === 'voice-role' && Array.isArray(session.roles)) {
@@ -1867,10 +2021,10 @@ export class BookDex extends plugin {
             }
             if (row.type === 'relic') {
                 const f = path.join(relicRoot, `${slugify(row.name)}.json`)
-                if (!fss.existsSync(f)) return this.reply(`未找到圣遗物：${row.name}`)
+                if (!fss.existsSync(f)) return this.reply(`未找到圣遗物故事：${row.name}`)
                 const set = JSON.parse(await fs.readFile(f, 'utf8'))
                 const text = renderRelicText(set)
-                return this.replyRichItemContent(set, `${set.name}圣遗物`, text, wantImage)
+                return this.replyRichItemContent(set, `${set.name}圣遗物故事`, text, wantImage)
             }
             if (row.type === 'weapon') {
                 const f = path.join(weaponRoot, `${slugify(row.name)}.json`)
@@ -2047,10 +2201,10 @@ export class BookDex extends plugin {
 
         if (exactRelic) {
             const file = path.join(relicRoot, `${slugify(exactRelic.name)}.json`)
-            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物：${exactRelic.name}`)
+            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物故事：${exactRelic.name}`)
             const set = JSON.parse(await fs.readFile(file, 'utf8'))
             const text = renderRelicText(set)
-            return this.replyRichItemContent(set, `${set.name}圣遗物`, text, wantImage)
+            return this.replyRichItemContent(set, `${set.name}圣遗物故事`, text, wantImage)
         }
 
         if (exactWeapon) {
@@ -2171,10 +2325,10 @@ export class BookDex extends plugin {
 
         if (fuzzyRelic) {
             const file = path.join(relicRoot, `${slugify(fuzzyRelic.name)}.json`)
-            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物：${fuzzyRelic.name}`)
+            if (!fss.existsSync(file)) return this.reply(`未找到圣遗物故事：${fuzzyRelic.name}`)
             const set = JSON.parse(await fs.readFile(file, 'utf8'))
             const text = renderRelicText(set)
-            return this.replyRichItemContent(set, `${set.name}圣遗物`, text, wantImage)
+            return this.replyRichItemContent(set, `${set.name}圣遗物故事`, text, wantImage)
         }
 
         if (fuzzyWeapon) {
