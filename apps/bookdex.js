@@ -81,7 +81,7 @@ import {
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
-import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS } from '../lib/bookdex/webui-config.js'
+import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS, AUTO_UPDATE_HOUR_GMT8 } from '../lib/bookdex/webui-config.js'
 
 const helpSessionCache = new Map()
 let helpSessionCacheLoaded = false
@@ -390,7 +390,7 @@ export class BookDex extends plugin {
         this.task = [
             {
                 name: '文本库每日自动更新',
-                cron: '0 0 0 * * ?',
+                cron: `0 0 ${AUTO_UPDATE_HOUR_GMT8} * * ?`,
                 fnc: this.autoUpdateTick.bind(this)
             }
         ]
