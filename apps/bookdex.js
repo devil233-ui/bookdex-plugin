@@ -80,6 +80,7 @@ import {
     renderBookTextWithDescription
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
+import { searchBwiki, formatBwikiError } from '../lib/bookdex/core/bwiki.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
 import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS, AUTO_UPDATE_HOUR_GMT8 } from '../lib/bookdex/webui-config.js'
 
@@ -1329,10 +1330,14 @@ export class BookDex extends plugin {
         return runBookDexTextSearch(keyword, types)
     }
 
-    async replySearch(keyword, types) {
+    async replySearch(keyword, types, { bwiki = false } = {}) {
         await this.reply(`🔎 正在搜索：${keyword}`)
         const rows = await this.runTextSearch(keyword, types)
-        if (!rows.length) return this.reply(`未找到关键词“${keyword}”`)
+        if (!rows.length) {
+            // 全局搜索（#搜索）在米游社文本库没有命中时，退到 bwiki 找词条
+            if (bwiki) return this.replyBwikiFallback(keyword)
+            return this.reply(`未找到关键词“${keyword}”`)
+        }
 
         let session = this.saveSession({
             type: 'search',
@@ -1344,6 +1349,28 @@ export class BookDex extends plugin {
 
         session = await this.replyChunkedListWithSession([`🔎 关键词：${keyword}`, `共找到 ${rows.length} 条`, '可引用本搜索结果发序号查看详情（可加“图片”或“语音”）'], lines, 10, session)
         return true
+    }
+
+    /**
+     * 米游社文本库没有命中时的兜底：去 bwiki（B站 wiki）检索词条。
+     * 只给词条链接与摘要——bwiki 的正文是模板拼出来的，抓下来一半是导航，不如让用户点进去看。
+     */
+    async replyBwikiFallback(keyword) {
+        let result = null
+        try {
+            result = await searchBwiki('ys', keyword)
+        } catch (err) {
+            logger.warn('[bookdex.search.bwiki] ', err?.message || err)
+            return this.reply(`米游社文本库里没有“${keyword}”，bwiki 兜底检索也失败了：${formatBwikiError(err)}，可稍后重试`)
+        }
+        if (!result.hits.length) return this.reply(`未找到关键词“${keyword}”：米游社文本库和 bwiki 都没有相关条目`)
+
+        const lines = result.hits.map((hit, i) => `${i + 1}. ${hit.title}${hit.snippet ? `\n  ↳ ${hit.snippet}` : ''}\n  🔗 ${hit.url}`)
+        return this.replyChunkedListWithSession([
+            `🔎 关键词：${keyword}`,
+            `米游社文本库没有收录，已在 bwiki（B站 wiki）找到 ${result.total} 条，下面是最相关的 ${result.hits.length} 条`,
+            '点开链接查看词条正文'
+        ], lines, 10, null)
     }
 
     async searchRoleStories() {
@@ -1404,7 +1431,7 @@ export class BookDex extends plugin {
     async searchAll() {
         const keyword = this.e.msg.replace(/^#搜索\s*/, '').trim()
         if (!keyword) return this.reply('请输入关键词')
-        return this.replySearch(keyword, ['book', 'role', 'relic', 'weapon', 'voice', 'plot', 'map', 'anecdote', 'card', 'backpack'])
+        return this.replySearch(keyword, ['book', 'role', 'relic', 'weapon', 'voice', 'plot', 'map', 'anecdote', 'card', 'backpack'], { bwiki: true })
     }
 
     async searchBooks() {
