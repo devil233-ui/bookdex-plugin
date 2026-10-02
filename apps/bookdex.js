@@ -80,6 +80,7 @@ import {
     renderBookTextWithDescription
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
+import { buildInlineNodes, hasInlineImages } from '../lib/bookdex/core/render-media.js'
 import { searchBwiki, formatBwikiError } from '../lib/bookdex/core/bwiki.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
 import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS, AUTO_UPDATE_HOUR_GMT8 } from '../lib/bookdex/webui-config.js'
@@ -1729,10 +1730,43 @@ export class BookDex extends plugin {
         }
         
         // 发纯文字时，回复的是 textForText（保留了第一个书名）
+        // 正文里带图时按原位置内联图片（对齐星铁）
+        if (item && hasInlineImages(item)) {
+            try {
+                const nodes = buildInlineNodes(item)
+                if (nodes.some(node => node.type === 'image')) {
+                    return await this.replyInlineNodes(chatTitle, nodes, tracked ? session : null)
+                }
+            } catch (err) {
+                logger.warn('[bookdex.inlineNodes]', err?.message || err)
+            }
+        }
         return this.replyStructuredText(textForText, chatTitle, tracked ? session : null)
     }
 
     // replyPlotContent
+    /** 正文 + 原位置内联图片：文本页与图片按顺序进合并转发（对齐星铁） */
+    async replyInlineNodes(chatTitle, nodes, session = null) {
+        const tracked = isValidTrackedSession(session)
+        if (chatTitle) {
+            if (tracked) session = await this.replyWithSession(chatTitle, session)
+            else {
+                const res = await this.reply(chatTitle)
+                if (isReplyError(res)) throw makeReplyError(res, 'title reply failed')
+            }
+        }
+        const messages = (nodes || [])
+            .map(node => (node.type === 'image' ? segment.image(node.url) : node.text))
+            .filter(Boolean)
+        if (!messages.length) return tracked ? (session || true) : true
+        if (tracked) {
+            session = await this.replyForwardBatchesWithSession(messages, session, TEXT_FORWARD_BATCH_SIZE)
+            return session || true
+        }
+        await this.replyForwardBatchesWithSession(messages, null, TEXT_FORWARD_BATCH_SIZE)
+        return true
+    }
+
     async replyPlotContent(item, wantImage = false, session = null) {
         const text = renderPlotText(item, "full")
 
