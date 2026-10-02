@@ -623,7 +623,17 @@ export class BookDex extends plugin {
                 { key: 'map', label: '地图文本数据', check: () => fetchMapAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchMapAll({ ...this.makeUpdateReporter('地图文本更新', silent, 500), deepCompare }) },
                 { key: 'anecdote', label: '角色逸闻数据', check: () => fetchAnecdoteAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchAnecdoteAll({ ...this.makeUpdateReporter('角色逸闻更新', silent, 500), deepCompare }) },
                 { key: 'card', label: '月谕圣牌数据', check: () => fetchCardAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchCardAll({ ...this.makeUpdateReporter('月谕圣牌更新', silent, 500), deepCompare }) },
-                { key: 'backpack', label: '背包数据', check: () => fetchBackpackAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchBackpackAll({ ...this.makeUpdateReporter('背包更新', silent, 500), deepCompare }) }
+                { key: 'backpack', label: '背包数据', check: () => fetchBackpackAll({ dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchBackpackAll({ ...this.makeUpdateReporter('背包更新', silent, 500), deepCompare }) },
+                { key: 'enemy', label: '敌人数据', check: () => fetchExtraChannel('enemy', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('enemy', { ...this.makeUpdateReporter('敌人更新', silent, 500), deepCompare }) },
+                { key: 'food', label: '食物数据', check: () => fetchExtraChannel('food', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('food', { ...this.makeUpdateReporter('食物更新', silent, 500), deepCompare }) },
+                { key: 'domain', label: '秘境数据', check: () => fetchExtraChannel('domain', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('domain', { ...this.makeUpdateReporter('秘境更新', silent, 500), deepCompare }) },
+                { key: 'npc', label: 'NPC与商店数据', check: () => fetchExtraChannel('npc', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('npc', { ...this.makeUpdateReporter('NPC与商店更新', silent, 500), deepCompare }) },
+                { key: 'achieve', label: '成就数据', check: () => fetchExtraChannel('achieve', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('achieve', { ...this.makeUpdateReporter('成就更新', silent, 500), deepCompare }) },
+                { key: 'vista', label: '观景点数据', check: () => fetchExtraChannel('vista', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('vista', { ...this.makeUpdateReporter('观景点更新', silent, 500), deepCompare }) },
+                { key: 'offering', label: '地区供奉与聚所数据', check: () => fetchExtraChannel('offering', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('offering', { ...this.makeUpdateReporter('地区供奉与聚所更新', silent, 500), deepCompare }) },
+                { key: 'tutorial', label: '教程数据', check: () => fetchExtraChannel('tutorial', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('tutorial', { ...this.makeUpdateReporter('教程更新', silent, 500), deepCompare }) },
+                { key: 'nerven', label: '幽境危战数据', check: () => fetchExtraChannel('nerven', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('nerven', { ...this.makeUpdateReporter('幽境危战更新', silent, 500), deepCompare }) },
+                { key: 'gaze', label: '灰眸数据', check: () => fetchExtraChannel('gaze', { dryRun: true }), exec: ({ deepCompare = false } = {}) => fetchExtraChannel('gaze', { ...this.makeUpdateReporter('灰眸更新', silent, 500), deepCompare }) }
             ]
 
             const confirmCheck = async (item) => {
