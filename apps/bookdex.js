@@ -81,9 +81,26 @@ import {
 } from '../lib/bookdex/core.js'
 import { formatFetchError } from '../lib/bookdex/core/crypto-api.js'
 import { buildInlineNodes, hasInlineImages } from '../lib/bookdex/core/render-media.js'
+import {
+    EXTRA_CHANNELS,
+    extraChannelByName,
+    fetchExtraChannel,
+    fetchAllExtraChannels,
+    loadExtraIndex,
+    loadExtraItem,
+    findExtraItemByName,
+    searchExtraIndex,
+    extraChannelStatus
+} from '../lib/bookdex/core/extra-channels.js'
 import { searchBwiki, formatBwikiError } from '../lib/bookdex/core/bwiki.js'
 import { startBookDexWebUi, getBookDexWebUiInfo } from '../lib/bookdex/webui.js'
 import { shouldRunBookDexAutoUpdate, loadBookDexWebConfig, consumeCustomAutoRun, FORCE_MODULE_KEYS, AUTO_UPDATE_HOUR_GMT8 } from '../lib/bookdex/webui-config.js'
+
+// 扩展频道（图鉴类）的名字与别名，用于生成指令正则（长的在前，避免短名抢先）
+const EXTRA_NAME_PATTERN = [...new Set(EXTRA_CHANNELS.flatMap(ch => [ch.name, ...(ch.aliases || [])]))]
+    .sort((a, b) => b.length - a.length)
+    .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
 
 // 分类表：#<分类>强制更新 与 #<条目名><分类>强制更新 都按它分发。
 // aliases 里放用户可能敲的分类写法（长写法放前面，单项指令按最长别名切分条目名）。
@@ -493,6 +510,37 @@ export class BookDex extends plugin {
                     reg: '^#重置更新$',
                     fnc: 'resetAndUpdate',
                     permission: 'master'
+                },
+                {
+                    reg: '^#(文本图鉴帮助|频道帮助|图鉴帮助)$',
+                    fnc: 'extraChannelHelp'
+                },
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})帮助\\d*$`,
+                    fnc: 'extraChannelList'
+                },
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})搜索\\s*(.+)$`,
+                    fnc: 'extraChannelSearch'
+                },
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})强制更新$`,
+                    fnc: 'forceUpdateExtraChannel',
+                    permission: 'master'
+                },
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})更新$`,
+                    fnc: 'updateExtraChannel',
+                    permission: 'master'
+                },
+                {
+                    reg: '^#(文本图鉴更新|频道更新|图鉴更新)$',
+                    fnc: 'updateAllExtraChannels',
+                    permission: 'master'
+                },
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})\\s+(.+)$`,
+                    fnc: 'extraChannelLookup'
                 },
                 {
                     reg: '^#([^\\s#].+)$',
@@ -1745,6 +1793,132 @@ export class BookDex extends plugin {
     }
 
     // replyPlotContent
+    /* ── 扩展频道（图鉴类，可在网页设置里勾选频道与模块）──────────────── */
+
+    /** 图鉴帮助：列出频道、条数、网页地址与用法 */
+    async extraChannelHelp() {
+        const status = await extraChannelStatus()
+        const lines = ['📖 图鉴类频道（在网页设置里勾选要哪些频道、哪些模块）']
+        for (const ch of status) {
+            lines.push(`${ch.enabled ? '✅' : '⛔'} ${ch.name}（${ch.itemCount} 条）`)
+            lines.push(`    用法：#${ch.name}帮助 / #${ch.name} <名字> / #${ch.name}搜索 <关键词>`)
+            lines.push(`    网页：${ch.wikiUrl}`)
+        }
+        lines.push('更新：#图鉴更新（全部） / #<频道>更新 / #<频道>强制更新（仅主人）')
+        return this.reply(lines.join('\n'))
+    }
+
+    /** #<频道>帮助[页码]：列条目，再引用本条发序号读正文 */
+    async extraChannelList() {
+        const match = String(this.e.msg || '').match(/^#(.+?)帮助(\d*)$/)
+        const channel = extraChannelByName(match?.[1])
+        if (!channel) return false
+        const page = Math.max(1, Number(match[2] || 1))
+        const index = await loadExtraIndex(channel.key)
+        const items = index.items || []
+        if (!items.length) return this.reply(`还没有${channel.name}数据，请先执行 #${channel.name}更新`)
+        const pageSize = 50
+        const totalPages = Math.max(1, Math.ceil(items.length / pageSize))
+        const current = Math.min(page, totalPages)
+        const slice = items.slice((current - 1) * pageSize, current * pageSize)
+        const session = this.saveSession({ type: 'extra', channel: channel.key, items: slice.map(it => ({ id: it.id, name: it.name })) })
+        const lines = slice.map((it, i) => `${(current - 1) * pageSize + i + 1}. ${it.name}`)
+        return this.replyChunkedListWithSession([
+            `${channel.name}（共 ${items.length} 条，第 ${current}/${totalPages} 页）`,
+            '引用本条后发序号查看内容（可加“图片”）',
+            `翻页用 #${channel.name}帮助${current + 1}｜网页 ${channel.wikiUrl.replace(/\?.*$/, '')}`
+        ], lines, 40, session)
+    }
+
+    /** #<频道>搜索 <关键词>：只搜本地已下载的标题 */
+    async extraChannelSearch() {
+        const match = String(this.e.msg || '').match(/^#(.+?)搜索\s*(.+)$/)
+        const channel = extraChannelByName(match?.[1])
+        const keyword = String(match?.[2] || '').trim()
+        if (!channel || !keyword) return false
+        const hits = await searchExtraIndex(channel.key, keyword)
+        if (!hits.length) return this.reply(`${channel.name}里没有搜到「${keyword}」`)
+        const session = this.saveSession({ type: 'extra', channel: channel.key, items: hits.map(it => ({ id: it.id, name: it.name })) })
+        const lines = hits.map((it, i) => `${i + 1}. ${it.name}`)
+        return this.replyChunkedListWithSession([`${channel.name}搜索「${keyword}」：找到 ${hits.length} 条`, '引用本条后发序号查看内容'], lines, 40, session)
+    }
+
+    /** 读取一个扩展频道条目（正文 + 原位置内联图片） */
+    async replyExtraItem(item, session = null) {
+        const chatTitle = item.url ? `${item.name}\n${item.url}` : item.name
+        if (hasInlineImages(item)) {
+            try {
+                const nodes = buildInlineNodes(item)
+                if (nodes.some(node => node.type === 'image')) return await this.replyInlineNodes(chatTitle, nodes, session)
+            } catch (err) {
+                logger.warn('[bookdex.extraItem]', err?.message || err)
+            }
+        }
+        const text = (item.richSections || []).map(sec => `【${sec.title}】\n${sec.text || ''}`).join('\n\n').trim()
+        if (!text) return this.reply(`${item.name}：当前勾选的模块没有可用内容，可在网页设置里放开对应模块`)
+        return this.replyContent(item.name, text, false, session, item)
+    }
+
+    /** #<频道> <名字>：按名字读条目 */
+    async extraChannelLookup() {
+        const match = String(this.e.msg || '').match(/^#(.+?)\s+(.+)$/)
+        const channel = extraChannelByName(match?.[1])
+        if (!channel) return false
+        const keyword = this.trimOutputSuffix(String(match[2] || '').trim())
+        if (!keyword) return false
+        const found = await findExtraItemByName(channel.key, keyword)
+        if (found?.item) {
+            const item = await loadExtraItem(channel.key, found.item.id)
+            if (!item) return this.reply(`这条${channel.name}内容还没有下载到本地，可以先执行 #${channel.name}更新`)
+            return this.replyExtraItem(item)
+        }
+        if (found?.ambiguous?.length) {
+            const session = this.saveSession({ type: 'extra', channel: channel.key, items: found.ambiguous.map(it => ({ id: it.id, name: it.name })) })
+            return this.replyChunkedListWithSession([`${channel.name}里匹配到 ${found.ambiguous.length} 条，引用本条后发序号选择`], found.ambiguous.map((it, i) => `${i + 1}. ${it.name}`), 40, session)
+        }
+        return this.reply(`${channel.name}里没有「${keyword}」；可先 #${channel.name}更新 拉取，或 #${channel.name}搜索 <关键词>`)
+    }
+
+    /** #<频道>更新 / 强制更新：按网页里的模块勾选拉取 */
+    async updateExtraChannel() {
+        const match = String(this.e.msg || '').match(/^#(.+?)更新$/)
+        const channel = extraChannelByName(match?.[1])
+        if (!channel) return false
+        await this.reply(`开始更新${channel.name}（按网页里勾选的模块），请稍等…`)
+        const reporter = this.makeReporter(`${channel.name}更新`, { silent: true })
+        try {
+            const ret = await fetchExtraChannel(channel.key, reporter)
+            if (ret.skipped) return this.reply(`${channel.name}在网页设置里是关闭状态，先打开再更新`)
+            return this.replySummary([{ label: channel.name, total: ret.total, updated: ret.updated, failed: ret.failed }], `${channel.name}更新完成`)
+        } catch (error) {
+            logger.error('[bookdex.extraUpdate]', error)
+            return this.reply(`${channel.name}更新失败：${formatFetchError(error)}`)
+        }
+    }
+
+    async forceUpdateExtraChannel() {
+        const match = String(this.e.msg || '').match(/^#(.+?)强制更新$/)
+        const channel = extraChannelByName(match?.[1])
+        if (!channel) return false
+        await this.reply(`开始强制核对${channel.name}：逐条重新解析（按当前勾选），条目多时较慢…`)
+        const reporter = this.makeReporter(`${channel.name}强制核对`, { silent: true })
+        try {
+            const ret = await fetchExtraChannel(channel.key, reporter, { deepCompare: true })
+            return this.replySummary([{ label: channel.name, total: ret.total, updated: ret.updated, failed: ret.failed }], `${channel.name}强制核对完成`)
+        } catch (error) {
+            logger.error('[bookdex.extraForce]', error)
+            return this.reply(`${channel.name}强制核对失败：${formatFetchError(error)}`)
+        }
+    }
+
+    /** #图鉴更新：按配置更新所有已启用的图鉴频道 */
+    async updateAllExtraChannels() {
+        await this.reply(`开始更新图鉴类频道（共 ${EXTRA_CHANNELS.length} 个，按网页勾选），请稍等…`)
+        const reporter = this.makeReporter('图鉴更新', { silent: true })
+        const results = await fetchAllExtraChannels(reporter)
+        return this.replySummary(results.map(r => ({ label: r.label, total: r.total, updated: r.updated, failed: r.failed })), '图鉴更新完成')
+    }
+
     /** 正文 + 原位置内联图片：文本页与图片按顺序进合并转发（对齐星铁） */
     async replyInlineNodes(chatTitle, nodes, session = null) {
         const tracked = isValidTrackedSession(session)
@@ -2060,6 +2234,14 @@ export class BookDex extends plugin {
             const weapon = JSON.parse(await fs.readFile(file, 'utf8'))
             const text = renderWeaponText(weapon)
             return this.replyRichItemContent(weapon, `${weapon.name}武器故事`, text, wantImage)
+        }
+
+        if (session?.type === 'extra' && Array.isArray(session.items)) {
+            const meta = session.items[idx - 1]
+            if (!meta) return this.reply('序号超出范围，请先重新打开该频道')
+            const item = await loadExtraItem(session.channel, meta.id)
+            if (!item) return this.reply('这条内容还没有下载到本地，可以先执行对应频道更新')
+            return this.replyExtraItem(item)
         }
 
         if (session?.type === 'search' && Array.isArray(session.results)) {
