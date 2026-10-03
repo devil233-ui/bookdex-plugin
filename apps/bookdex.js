@@ -1836,7 +1836,7 @@ export class BookDex extends plugin {
         return this.replyChunkedListWithSession([
             `${channel.name}（共 ${items.length} 条，第 ${current}/${totalPages} 页）`,
             '引用本条后发序号查看内容（可加“图片”）',
-            `翻页用 #${channel.name}帮助${current + 1}｜网页 ${channel.wikiUrl.replace(/\?.*$/, '')}`
+            `翻页用 #${channel.name}帮助${current + 1}｜网页 https://baike.mihoyo.com/ys/obc/channel/map/${channel.mapId || 1}/${channel.id}`
         ], lines, 40, session)
     }
 
