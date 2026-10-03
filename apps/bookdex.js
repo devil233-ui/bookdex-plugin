@@ -540,13 +540,13 @@ export class BookDex extends plugin {
                     permission: 'master'
                 },
                 {
-                    reg: `^#(${EXTRA_NAME_PATTERN})\\s*(.+)$`,
-                    fnc: 'extraChannelLookup'
-                },
-                {
                     reg: '^#([^\\s#].+)$',
                     fnc: 'pickByTitle'
                 }
+                {
+                    reg: `^#(${EXTRA_NAME_PATTERN})\\s*(.+)$`,
+                    fnc: 'extraChannelLookup'
+                },
             ]
         })
     }
