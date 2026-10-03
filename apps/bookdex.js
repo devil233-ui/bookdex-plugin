@@ -1877,7 +1877,7 @@ export class BookDex extends plugin {
         if (!channel) return false
         const keyword = this.trimOutputSuffix(String(match[2] || '').trim())
         if (!keyword) return false
-        const found = await findExtraItemByName(channel.key, title)
+        const found = await findExtraItemByName(channel.key, keyword)
         if (found?.item) {
             const item = await loadExtraItem(channel.key, found.item.id)
             if (!item) return this.reply(`这条${channel.name}内容还没有下载到本地，可以先执行 #${channel.name}更新`)
