@@ -1877,7 +1877,7 @@ export class BookDex extends plugin {
         if (!channel) return false
         const keyword = this.trimOutputSuffix(String(match[2] || '').trim())
         if (!keyword) return false
-        const found = await findExtraItemByName(channel.key, keyword)
+        const found = await findExtraItemByName(channel.key, title)
         if (found?.item) {
             const item = await loadExtraItem(channel.key, found.item.id)
             if (!item) return this.reply(`这条${channel.name}内容还没有下载到本地，可以先执行 #${channel.name}更新`)
@@ -2596,7 +2596,7 @@ export class BookDex extends plugin {
         // 图鉴类频道兜底：按名字在扩展频道索引里找（#摩拉肉 / #幕府足轻头 这类裸名字）
         for (const channel of EXTRA_CHANNELS) {
             if (channel.hidden) continue
-            const extraHit = await findExtraItemByName(channel.key, keyword)
+            const extraHit = await findExtraItemByName(channel.key, title)
             if (extraHit?.item) {
                 const extraItem = await loadExtraItem(channel.key, extraHit.item.id)
                 if (extraItem) return this.replyExtraItem(extraItem)
