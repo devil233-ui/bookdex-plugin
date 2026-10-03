@@ -540,7 +540,7 @@ export class BookDex extends plugin {
                     permission: 'master'
                 },
                 {
-                    reg: `^#(${EXTRA_NAME_PATTERN})\\s+(.+)$`,
+                    reg: `^#(${EXTRA_NAME_PATTERN})\\s*(.+)$`,
                     fnc: 'extraChannelLookup'
                 },
                 {
@@ -2591,6 +2591,20 @@ export class BookDex extends plugin {
             const weapon = JSON.parse(await fs.readFile(file, 'utf8'))
             const text = renderWeaponText(weapon)
             return this.replyRichItemContent(weapon, `${weapon.name}武器故事`, text, wantImage)
+        }
+
+        // 图鉴类频道兜底：按名字在扩展频道索引里找（#摩拉肉 / #幕府足轻头 这类裸名字）
+        for (const channel of EXTRA_CHANNELS) {
+            if (channel.hidden) continue
+            const extraHit = await findExtraItemByName(channel.key, keyword)
+            if (extraHit?.item) {
+                const extraItem = await loadExtraItem(channel.key, extraHit.item.id)
+                if (extraItem) return this.replyExtraItem(extraItem)
+            }
+            if (extraHit?.ambiguous?.length) {
+                const extraSession = this.saveSession({ type: 'extra', channel: channel.key, items: extraHit.ambiguous.map(it => ({ id: it.id, name: it.name })) })
+                return this.replyChunkedListWithSession([`${channel.name}里匹配到 ${extraHit.ambiguous.length} 条，引用本条后发序号选择`], extraHit.ambiguous.map((it, y) => `${y + 1}. ${it.name}`), 40, extraSession)
+            }
         }
 
         return false
