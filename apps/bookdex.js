@@ -542,7 +542,7 @@ export class BookDex extends plugin {
                 {
                     reg: '^#([^\\s#].+)$',
                     fnc: 'pickByTitle'
-                }
+                },
                 {
                     reg: `^#(${EXTRA_NAME_PATTERN})\\s*(.+)$`,
                     fnc: 'extraChannelLookup'
